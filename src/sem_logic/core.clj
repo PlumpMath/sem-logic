@@ -5,7 +5,7 @@
    (:require [clojure.core.logic.fd :as fd]))
 
 
-;; Time Predicats
+;; Time Predicats, more elegance welcome ;-)
 (defn F [pred x n]
   (fresh [times fut]
          (T times)
@@ -26,28 +26,21 @@
 (defn G [pred x n]
   (fresh [time]
          (T time)
-         (project [n time]
+         (project [n]
                   (everyg #(pred x %)
                           (range n (inc (apply max time)))))))
 
-
-;; TODO
-;; - import words into universe
-;; - map NP and VP to predicates
-;;   - lift CC VPs
-;; - predicate logic quantifiers
-;; - linguistic quantifiers
-
 (db-rel T time)
-(db-rel D name t)
+(db-rel U name)
 
 (db-rel Pr president t)
 (db-rel Sl sleep t)
 
-(def hans-maria-model
-  (db [T [1 2 3]]
-      [D ['p 'h 'm]]
+(def M
+  (db [T [1 2 3]] ;; order-rel is fd/<
+      [U ['p 'h 'm]]
 
+      ;; discrete representation of V
       [Pr 'h 1]
       [Pr 'h 2]
       [Pr 'p 3]
@@ -61,26 +54,28 @@
       [Sl 'm 1]
       [Sl 'm 2]))
 
+(defn implies [P Q]
+  (conda [(P) (Q)]
+         [s#]))
+
+(defn time [t]
+  (fresh [times]
+         (T times)
+         (membero t times)))
+
 ;; forall x : P(x) \rightarrow P(p*)
-(with-db hans-maria-model
-  (doall (run* [t]
-               (fresh [times dom]
-                      (T times)
-                      (D dom)
-                      (membero t times)
-                      (everyg  #(conda [(Pr % t) (Pr 'p t)]
-                                       [s#])
-                               dom)))))
+(with-db M
+  (run* [a t]
+        (time t)
+        (U a)
+        (everyg (fn [x] (implies #(Pr x t) #(Pr 'p t)))
+                a)))
 
 
 ;; forall x : PS(x) \rightarrow HS(x)
-(with-db hans-maria-model
-  (doall (run* [now]
-               (fresh [dom time]
-                      (T time)
-                      (D dom)
-                      (membero now time)
-                      (everyg #(conda [(P Sl % now)
-                                       (H Sl % now)]
-                                      [s#])
-                              dom)))))
+(with-db M
+  (run* [a t]
+        (time t)
+        (U a)
+        (everyg (fn [x] (implies #(P Sl x t) #(H Sl x t)))
+                a)))
