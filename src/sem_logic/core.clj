@@ -68,7 +68,8 @@
   (run* [a t]
         (time t)
         (U a)
-        (everyg (fn [x] (implies #(Pr x t) #(Pr 'p t)))
+        (everyg (fn [x] (implies #(Pr x t)
+                                #(Pr 'p t)))
                 a)))
 
 
@@ -77,5 +78,18 @@
   (run* [a t]
         (time t)
         (U a)
-        (everyg (fn [x] (implies #(P Sl x t) #(H Sl x t)))
+        (everyg (fn [x] (implies #(P Sl x t)
+                                #(H Sl x t)))
                 a)))
+
+;; FPS(h*)
+(with-db (db [T [1 2 3]]
+             [U ['h]]
+
+             [Sl 'h 2])
+  (run* [x t]
+        (time t)
+        (fresh [dom]
+               (U dom)
+               (membero x dom))
+        (F (partial P Sl) x t)))
