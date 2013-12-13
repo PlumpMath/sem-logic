@@ -5,6 +5,13 @@
    (:require [clojure.core.logic.fd :as fd]))
 
 
+(db-rel T time)
+(db-rel U name)
+
+(db-rel Pr president t)
+(db-rel Sl sleep t)
+
+
 ;; Time Predicats, more elegance welcome ;-)
 (defn F [pred x n]
   (fresh [times fut]
@@ -29,12 +36,6 @@
          (project [n]
                   (everyg #(pred x %)
                           (range n (inc (apply max time)))))))
-
-(db-rel T time)
-(db-rel U name)
-
-(db-rel Pr president t)
-(db-rel Sl sleep t)
 
 (def M
   (db [T [1 2 3]] ;; order-rel is fd/<
