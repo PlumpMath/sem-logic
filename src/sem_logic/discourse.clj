@@ -1,7 +1,7 @@
 (ns sem-logic.discourse
   (:refer-clojure :exclude [==])
   (:use sem-logic.wiki
-        clojure.core.ogic
+        clojure.core.logic
         clojure.core.logic.pldb
         opennlp.nlp
         opennlp.treebank)
@@ -73,14 +73,20 @@
 
 (defmethod analyze 'PRP
   [{[chunk] :chunk :as elem}]
-  (apply assoc elem
-         (case (.toLowerCase chunk)
-           "i" [:quantity 1 :determined true :type :person]
-           "you" [:determined true :type :person]
-           "he" [:quantity 1 :determined true :genus :male :type :person]
-           "she" [:quantity 1 :determined true :genus :female :type :person]
-           "it" [:quantity 1 :determined true :genus :neutrum :type :animal]
-           "them" [:quantity :many :determined true])))
+  (assoc
+      (apply assoc elem
+             (case (.toLowerCase chunk)
+               "i" [:quantity 1 :determined true :type :person]
+               "me" [:quantity 1 :determined true :type :person]
+               "you" [:determined true :type :person]
+               "he" [:quantity 1 :determined true :genus :male :type :person]
+               "him" [:quantity 1 :determined true :genus :male :type :person]
+               "she" [:quantity 1 :determined true :genus :female :type :person]
+               "her" [:quantity 1 :determined true :genus :female :type :person]
+               "it" [:quantity 1 :determined true :genus :neutrum :type :animal]
+               "they" [:quantity :many :determined true]
+               "them" [:quantity :many :determined true]))
+    :pred 'ppro))
 
 (defmethod analyze 'DT
   [{[chunk] :chunk :as elem}]
@@ -100,6 +106,14 @@
                 (subs chunk 0 (dec (.length chunk)))
                 chunk)]
     (merge elem (find-lexicon 'NN chunk))))
+
+(defmethod analyze 'NNS
+  [{[chunk] :chunk :as elem}]
+  (let [chunk (if (.endsWith chunk "s")
+                (subs chunk 0 (dec (.length chunk)))
+                chunk)]
+    (assoc (merge elem (find-lexicon 'NN chunk))
+      :quantity :many)))
 
 (defmethod analyze :default
   [elem]
@@ -139,8 +153,8 @@
 
 (defmethod emit 'VP
   [{chunk :chunk :as elem}]
-  (let [[verb] (filter #(= (:role %) :verb) chunk)
-        [obj] (filter #(= (:role %) :object) chunk)]
+  (let [[verb] (filter #(= (:role %) :verb) (map emit chunk))
+        [obj] (filter #(= (:role %) :object) (map emit chunk))]
     {:verb verb
      :object obj}))
 
@@ -152,15 +166,42 @@
 
 
 
+;; model building
 
+(db-rel Noun name var)
+(db-rel TransVerb name subj obj svar ovar)
+(db-rel Verb name subj svar)
+(db-rel Node var data)
+
+(defn update-model [model {:keys [subject verb object] :as emission}]
+    (let [subj (gensym)
+          obj (gensym)]
+      (->
+       (case (:transitivity verb)
+         :transitive (db-fact model TransVerb (:pred verb)
+                              (:pred subject) (:pred object)
+                              subj obj)
+         :intransitive (db-fact model Verb (:pred verb)
+                                (:pred subject) subj))
+       (db-fact Noun (:pred subject) subj)
+       (db-fact Noun (:pred object) obj)
+       (db-fact Node subj subject)
+       (db-fact Node obj object)
+       (update-in [:occurances] conj subj obj))))
+
+(defn unify-weakly [attr a b]
+  (project [a b]
+           (conde [(== (attr a) (attr b))]
+                  [(== nil (attr a))]
+                  [(== nil (attr b))])))
 
 (comment
 
   (name-find ["Johns"])
 
   (transitivity (-> (meta (@lexicon "own"))
-                  :wiki
-                  wikitext))
+                    :wiki
+                    wikitext))
 
 
 
@@ -170,23 +211,36 @@
   #_(analyze (parse-sentence "He beats it ."))
 
   (analyze {:tag 'DT
-          :chunk '("A")})
+            :chunk '("A")})
 
 
 
-  (db-rel Noun name var)
-  (db-rel TransVerb name subj obj)
-  (db-rel Verb name subj obj)
 
   (def model (atom (db)))
 
   (swap! model db-fact TransVerb 'own 'farmer 'donkey)
 
-  (def emission (emit (analyze (parse-sentence "A farmer owns a donkey ."))))
+  (def owns-emission (emit (analyze (parse-sentence "A farmer owns donkeys ."))))
 
-  (defn magic [{:keys [subject verb object]}]
-  (run* [q]
-        (== q (case (verb :transitivity)
-                :transitive 42))))
+  (def beats-emission (emit (analyze (parse-sentence "He beats them ."))))
 
-  (magic emission))
+  (let [new-model (-> @model
+                      (update-model owns-emission)
+                      (update-model beats-emission))]
+    (with-db new-model
+      (run* [subj-pred obj-pred subj-var obj-var subj-dat obj-dat]
+            (TransVerb 'beat subj-pred obj-pred subj-var obj-var)
+            (Node subj-var subj-dat)
+            (Node obj-var obj-dat)
+            (fresh [pred-var pred-type ppro-var pred-dat ppro-dat]
+                   (conde [(== subj-var pred-var)]
+                          [(== subj-var ppro-var)])
+
+                   (Node pred-var pred-dat)
+                   (Node ppro-var ppro-dat)
+                   (!= pred-type 'ppro)
+                   (Noun 'ppro ppro-var)
+                   (Noun pred-type pred-var)
+                   (project [ppro-dat] (== true (:determined ppro-dat)))
+                   (unify-weakly :type pred-dat ppro-dat)
+                   (unify-weakly :quantity pred-dat ppro-dat))))))

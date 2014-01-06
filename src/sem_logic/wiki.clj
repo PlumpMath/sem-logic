@@ -59,9 +59,9 @@
 (defmethod from-wiktionary 'NN
   [type word text]
   (assoc (cond (> (animals text)
-                  (persons text) {:type :animal})
+                  (persons text)) {:type :animal}
                (< (animals text)
-                  (persons text) {:type :person}))
+                  (persons text)) {:type :person})
     :pred (symbol word)))
 
 (defmethod from-wiktionary 'VBZ
