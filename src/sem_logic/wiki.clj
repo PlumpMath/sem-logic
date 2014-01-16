@@ -34,7 +34,9 @@
       first
       (get "*")))
 
-(defn transitivity [wikitext]
+(defn transitivity
+  "Dumb binary majority estimate on count of entries. TODO allow different scenarios"
+  [wikitext]
   (let [contexts (->> wikitext
                       (re-seq #"\{\{.+\}\}")
                       (filter #(re-find #"context" %)))

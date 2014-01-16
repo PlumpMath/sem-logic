@@ -8,8 +8,7 @@
   (:require [clojure.core.logic.fd :as fd]))
 
 
-(def treebank-parser
-  (make-treebank-parser "parser-model/en-parser-chunking.bin"))
+(def treebank-parser (make-treebank-parser "parser-model/en-parser-chunking.bin"))
 
 (def name-find (make-name-finder "parser-model/en-ner-person.bin"))
 
@@ -26,221 +25,91 @@
                           {:wiki page})
                         {})) word)))))
 
+
 (defn parse-sentence [sent]
   (-> (treebank-parser [sent])
       first
       make-tree))
 
-;; analyzers
 
-(defmulti analyze "Analyze chunks." :tag)
-
-;; non-terminal
-
-(defmethod analyze 'TOP
-  [elem]
-  (update-in elem [:chunk] #(map analyze %)))
-
-(defmethod analyze 'S
-  [elem]
-  (let [new-elem (update-in elem [:chunk] #(mapv analyze %))]
-    (if (second new-elem)
-      (assoc-in new-elem [:chunk 0 :role] :subject))))
-
-(defmethod analyze 'NP
-  [elem]
-  (update-in elem [:chunk] #(map analyze %)))
-
-(defmethod analyze 'VP
-  [elem]
-  (let [new-elem (update-in elem [:chunk] #(mapv analyze %))]
-    (if (second new-elem)
-      (assoc-in new-elem [:chunk 1 :role] :object))))
-
-;; word-level, terminal
-
-(defmethod analyze 'VBZ
-  [{[chunk] :chunk :as elem}]
-  (let [third-sing (.endsWith chunk "s")
-        chunk (if third-sing
-                (subs chunk 0 (dec (.length chunk)))
-                chunk)
-        new-elem (merge elem
-                        (find-lexicon 'VBZ chunk)
-                        {:role :verb})]
-    (if third-sing (assoc new-elem :quantity 1)
-        new-elem)))
-
-(defmethod analyze 'PRP
-  [{[chunk] :chunk :as elem}]
-  (assoc
-      (apply assoc elem
-             (case (.toLowerCase chunk)
-               "i" [:quantity 1 :determined true :type :person]
-               "me" [:quantity 1 :determined true :type :person]
-               "you" [:determined true :type :person]
-               "he" [:quantity 1 :determined true :genus :male :type :person]
-               "him" [:quantity 1 :determined true :genus :male :type :person]
-               "she" [:quantity 1 :determined true :genus :female :type :person]
-               "her" [:quantity 1 :determined true :genus :female :type :person]
-               "it" [:quantity 1 :determined true :genus :neutrum :type :animal]
-               "they" [:quantity :many :determined true]
-               "them" [:quantity :many :determined true]))
-    :pred 'ppro))
-
-(defmethod analyze 'DT
-  [{[chunk] :chunk :as elem}]
-  (apply assoc elem
-         (case (.toLowerCase chunk)
-           "a" [:quantity 1 :determined false]
-           "all" [:quantity :all :determined false]
-           "none" [:quantity 0 :determined false]
-           "the" [:determined true]
-           "this" [:quantity 1 :determined true]
-           "these" [:quantity :many :determined true]
-           "that" [:quantity 1 :determined true])))
-
-(defmethod analyze 'NN
-  [{[chunk] :chunk :as elem}]
-  (let [chunk (if (.endsWith chunk "s")
-                (subs chunk 0 (dec (.length chunk)))
-                chunk)]
-    (merge elem (find-lexicon 'NN chunk))))
-
-(defmethod analyze 'NNS
-  [{[chunk] :chunk :as elem}]
-  (let [chunk (if (.endsWith chunk "s")
-                (subs chunk 0 (dec (.length chunk)))
-                chunk)]
-    (assoc (merge elem (find-lexicon 'NN chunk))
-      :quantity :many)))
-
-(defmethod analyze :default
-  [elem]
-  (assoc elem :not-supported true))
-
-;; nouns
-;; morphology -> singular, plural, genus?
-;; name?
-;; lexicon -> genus
-
-;; verb
-;; tempus, modus
+(defmulti ->drs
+  "Generate a discourse representative structure from a parse tree recursively."
+  (fn [chunk _ _] (:tag chunk)))
 
 
-;; target: temporal, modal, intensional annotations
-
-(defmulti emit :tag)
-
-;; non-terminal
-
-(defmethod emit 'TOP
-  [{chunk :chunk :as elem}]
-  (apply merge (map emit chunk)))
-
-(defmethod emit 'S
-  [{chunk :chunk :as elem}]
-  (let [[subj] (filter #(= (:role %) :subject) (map emit chunk))
-        [{:keys [verb object]}] (filter :verb (map emit chunk))]
-    {:subject subj
-     :verb verb
-     :object object}))
-
-(defmethod emit 'NP
-  [{chunk :chunk :as elem}]
-  (merge (apply merge (map emit chunk)) elem))
+(defmethod ->drs 'TOP
+  [{[S] :chunk} down up]
+  (->drs S down up))
 
 
-(defmethod emit 'VP
-  [{chunk :chunk :as elem}]
-  (let [[verb] (filter #(= (:role %) :verb) (map emit chunk))
-        [obj] (filter #(= (:role %) :object) (map emit chunk))]
-    {:verb verb
-     :object obj}))
-
-;; word-level, terminal
-
-(defmethod emit :default
-  [elem]
-  elem)
-
-
-
-;; model building
-
-(db-rel Noun name var)
-(db-rel TransVerb name subj obj svar ovar)
-(db-rel Verb name subj svar)
-(db-rel Node var data)
-
-(defn update-model [model {:keys [subject verb object] :as emission}]
-    (let [subj (gensym)
-          obj (gensym)]
-      (->
-       (case (:transitivity verb)
-         :transitive (db-fact model TransVerb (:pred verb)
-                              (:pred subject) (:pred object)
-                              subj obj)
-         :intransitive (db-fact model Verb (:pred verb)
-                                (:pred subject) subj))
-       (db-fact Noun (:pred subject) subj)
-       (db-fact Noun (:pred object) obj)
-       (db-fact Node subj subject)
-       (db-fact Node obj object)
-       (update-in [:occurances] conj subj obj))))
-
-(defn unify-weakly [attr a b]
-  (project [a b]
-           (conde [(== (attr a) (attr b))]
-                  [(== nil (attr a))]
-                  [(== nil (attr b))])))
-
-(comment
-
-  (name-find ["Johns"])
-
-  (transitivity (-> (meta (@lexicon "own"))
-                    :wiki
-                    wikitext))
+(defmethod ->drs 'S
+  [{[a b c d e f] :chunk} down up]
+  (matche [(:tag a) (:tag b) (:tag c)]
+          [['NP 'VP _]
+           ;; indefinite nominal phrase
+           (fresh [?np ?vp ?verb ?obj]
+                  (->drs a {:defined false} ?np)
+                  (->drs b {} ?vp)
+                  (featurec ?vp {:object ?obj})
+                  (featurec ?vp {:verb ?verb})
+                  (== up (merge-with concat down {:universe [?np ?obj]
+                                                  :conditions [[?verb ?np ?obj]]})))]))
 
 
-
-  (swap! lexicon (fn [old] {}))
-
-  #_(emit (analyze (parse-sentence "A farmer owns a donkey .")))
-  #_(analyze (parse-sentence "He beats it ."))
-
-  (analyze {:tag 'DT
-            :chunk '("A")})
-
-
+(defmethod ->drs 'NP
+  [{[a b c d e f] :chunk} down up]
+  (project [down]
+           (matche [(:tag a) (:tag b)]
+                   [['DT 'NN]
+                    (all (->drs a down up)
+                         (->drs b down up))]
+                   [['PRP _] (->drs a down up)])))
 
 
-  (def model (atom (db)))
+(defmethod ->drs 'PRP
+  [{[prp] :chunk} down up]
+  (== up (merge down (case (.toLowerCase prp)
+                       "it" {:quant 1 :gender :neutrum :defined true}
+                       "him" {:quant 1 :gender :male :defined true}))))
 
-  (swap! model db-fact TransVerb 'own 'farmer 'donkey)
 
-  (def owns-emission (emit (analyze (parse-sentence "A farmer owns donkeys ."))))
+(defn- find-verb [verb]
+  (if (.endsWith verb "s")
+    {:verb (find-lexicon 'VBZ (subs verb
+                                    0
+                                    (dec (count verb))))
+     :quant 1}
+    {:verb (find-lexicon 'VBZ verb)}))
 
-  (def beats-emission (emit (analyze (parse-sentence "He beats them ."))))
 
-  (let [new-model (-> @model
-                      (update-model owns-emission)
-                      (update-model beats-emission))]
-    (with-db new-model
-      (run* [subj-pred obj-pred subj-var obj-var subj-dat obj-dat]
-            (TransVerb 'beat subj-pred obj-pred subj-var obj-var)
-            (Node subj-var subj-dat)
-            (Node obj-var obj-dat)
-            (fresh [pred-var pred-type ppro-var pred-dat ppro-dat]
-                   (conde [(== subj-var pred-var)]
-                          [(== subj-var ppro-var)])
+(defmethod ->drs 'VP
+  [{[a b c d e f] :chunk} down up]
+  (let [verb (find-verb (-> a :chunk first))]
+    (matche [(:tag a) (:tag b)]
 
-                   (Node pred-var pred-dat)
-                   (Node ppro-var ppro-dat)
-                   (!= pred-type 'ppro)
-                   (Noun 'ppro ppro-var)
-                   (Noun pred-type pred-var)
-                   (project [ppro-dat] (== true (:determined ppro-dat)))
-                   (unify-weakly :type pred-dat ppro-dat)
-                   (unify-weakly :quantity pred-dat ppro-dat))))))
+            [['VBZ _]
+             (== up (merge down {:verb verb}))]
+
+            [['VBZ 'NP]
+             (fresh [?np ?defined]
+                    (membero ?defined [true false])
+                    (->drs b {:defined ?defined} ?np)
+                    (project [?np] (== up (merge down verb {:object ?np}))))])))
+
+
+(defmethod ->drs 'DT
+  [{[det] :chunk} down up]
+  (case (.toLowerCase det)
+    "a" (featurec up {:defined false})
+    "the" (featurec up {:defined true})))
+
+
+(defmethod ->drs 'NN
+  [{[noun] :chunk} down up]
+  (== up (merge down {:noun (find-lexicon 'NN noun)})))
+
+
+(reduce (fn [drs sent] (first (run 1 [q] (->drs (parse-sentence sent) drs q))))
+        {}
+        ["A donkey owns a farmer ."
+         "It beats him ."])
