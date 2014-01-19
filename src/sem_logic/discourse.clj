@@ -75,7 +75,8 @@
 
 
 (defmethod drs 'NP
-  [{[a b c d e f] :chunk} down up]
+  [{[a b c d e f] :chunk :as chunk} down up]
+  chunk
   (fresh [?defined]
          (membero ?defined [true false])
          (project [down ?defined]
@@ -83,6 +84,7 @@
                           [['DT 'NN]
                            (all (drs a down up)
                                 (drs b (assoc down :defined ?defined) up))]
+                          [['NNP _] (drs a down up)]
                           [['PRP _] (drs a down up)]))))
 
 
@@ -146,9 +148,11 @@
                   n))))
 
 (defmethod drs 'NNP
-  [{[noun] :chunk} down up]
+  [{[noun] :chunk :as chunk} down up]
   (let [nom {:id (java.util.UUID/randomUUID)
-             :pred noun}]
+             :pred noun
+             :quant 1
+             :type :name}]
     (== up (merge down
                   {:univ (conj (:univ down) nom)}
                   nom ))))
@@ -157,7 +161,8 @@
           (first (run 1 [q] (drs (parse-sentence sent) model q))))
         {:univ []
          :conds []}
-        ["A sheep sleeps ."])
+        ["Peter sleeps ."
+         "He has a headache ."])
 
 
 
