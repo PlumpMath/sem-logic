@@ -44,12 +44,15 @@
           (keyword disjun) #{(drs a {}) (drs c {})}
           :neg false}
 
-         [['NP ['DT (:or 'Every 'every 'All 'all)] & _] ['VP & _] _]
+         [['NP [(:or 'DT 'JJ)
+                (:or 'Every 'every 'All 'all 'Some 'some 'Many 'many 'Few 'few 'None)] & _]
+          ['VP & _] _]
          (let [{:keys [univ conds neg]} (partial-sent down a b) ]
            {:univ [] :conds []
             :ante {:univ [(first univ)]
                    :conds []
                    :neg false}
+            :quant (.toLowerCase (name (get-in a [1 1])))
             :conseq {:univ (rest univ)
                      :conds conds
                      :neg neg}
@@ -64,7 +67,14 @@
          {:univ univ :conds conds
           :ante (assoc (drs (a 2) {:univ [] :conds []}) :neg false)
           :conseq (partial-sent {} b c)
-          :neg false}))
+          :neg false}
+
+         ;; subject gap
+         [['VP & _] _ _]
+         (let [{:keys [univ conds negation]} (drs a down)]
+           {:univ univ :conds conds
+            :filler (down :filler)
+            :neg negation})))
 
 
 
@@ -78,9 +88,7 @@
              :univ (:univ rel)
              :conds (:conds rel)))
 
-         [['DT _] [(:or 'NN 'NNS) _]] (->> down
-                                            (drs a)
-                                            (drs b))
+         [[(:or 'DT 'JJ) _] [(:or 'NN 'NNS) _]] (->> down (drs a) (drs b))
          [['NNP & _] _] (drs a down)
          [['PRP & _] _] (drs a down)) )
 
@@ -104,9 +112,14 @@
   (case (.toLowerCase (name det))
     "every" down
     "all" down
+    "some" down
     "a" (merge down {:defined false})
     "an" (merge down {:defined false})
     "the" (merge down {:defined true})))
+
+(defmethod drs 'JJ
+  [[_ det] down]
+  down)
 
 
 (defmethod drs 'NN
