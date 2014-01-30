@@ -1,174 +1,166 @@
 (ns sem-logic.discourse
   (:refer-clojure :exclude [==])
-  (:use sem-logic.wiki
+  (:use [clojure.core.match :refer [match]]
         clojure.core.logic
-        clojure.core.logic.pldb
-        opennlp.nlp
-        opennlp.treebank)
-  (:require [clojure.core.logic.fd :as fd]))
+        clojure.core.logic.pldb)
+  (:require [sem-logic.lexicon :refer [find-verb find-lexicon term]]
+            [sem-logic.parser :refer [opennlp-sentence berkeley-sentence]]
+            [clojure.core.logic.fd :as fd]))
 
+(defn ^:dynamic *id-fn* [] (java.util.UUID/randomUUID))
 
-(def treebank-parser
-  (make-treebank-parser "parser-model/en-parser-chunking.bin"))
+(defn node-dispatch [[f] _] f)
 
-(def name-find
-  (make-name-finder "parser-model/en-ner-person.bin"))
+(defmulti drs node-dispatch)
 
-(def lexicon (atom {}))
+(defmethod drs 'ROOT
+  [[_ a b c d] down]
+  (match [a b]
+         [['INTJ] _] (drs a down)
+         [['S & _] _] (drs a down)))
 
-(defn find-lexicon [type word]
-  (let [entry (@lexicon word)]
-    (if entry entry
-        (let [page (wiktionary-page word)
-              text (wikitext page)]
-          (get (swap! lexicon assoc word
-                      (if text
-                        (with-meta (from-wiktionary type word text)
-                          {:wiki page})
-                        {})) word)))))
+(defn partial-sent [{:keys [univ conds filler]} np-chunk vp-chunk]
+  (let [np (drs np-chunk {:univ univ :conds conds})
+        subj (dissoc np :univ :conds)
+        {np-conds :conds np-univ :univ} np
 
+        {vp-univ :univ vp-conds :conds verb :verb obj :object neg :negation}
+        (drs vp-chunk {:univ np-univ :conds np-conds})
 
-
-(defn parse-sentence [sent]
-  (-> (treebank-parser [sent])
-      first
-      make-tree))
-
-
-(defmulti drs
-  "Generate a discourse representative structure
-  from a parse tree recursively."
-  (fn [chunk _ _] (:tag chunk)))
-
-
-(defmethod drs 'TOP
-  [{[S] :chunk} down up]
-  (drs S down up))
+        obj (or obj filler)
+        neg (or neg false)]
+    {:univ vp-univ
+     :conds (conj (or vp-conds [])
+                  (if obj [verb (:id subj) (:id obj)]
+                    [verb (:id subj)]))
+     :neg neg}))
 
 
 (defmethod drs 'S
-  [{[a b c d e f] :chunk} down up]
-  (matche [(:tag a) (:tag b) (:tag c)]
-          [['NP 'VP _]
-           ;; indefinite nominal phrase
-           (fresh [?np ?vp ?subj ?verb ?obj ?univ ?conds ?conds-a]
-                  (fresh [?univ-a]
-                         (featurec ?np {:univ ?univ-a :conds ?conds-a})
-                         (featurec ?vp {:univ ?univ :conds ?conds})
-                         (drs a down ?np)
-                         (project [?univ-a ?conds-a]
-                                  (drs b {:univ ?univ-a
-                                          :conds ?conds-a} ?vp)))
-                  ;; merge into new drs
-                  (featurec ?vp {:verb ?verb})
-                  (conda [(featurec ?vp {:object ?obj})]
-                         [(== ?obj nil)])
-                  (project [?univ ?conds ?np ?obj]
-                           (== up {:univ ?univ
-                                   :conds (conj ?conds
-                                                (if ?obj
-                                                  [?verb
-                                                   (:id ?np)
-                                                   (:id ?obj)]
-                                                  [?verb (:id ?np)]))})))]))
+  [[_ a b c d] {:keys [univ conds] :as down}]
+  (match [a b c]
+         [['S & _] ['CC disjun] ['S & _]]
+         {:univ univ :conds conds
+          (keyword disjun) #{(drs a {}) (drs c {})}
+          :neg false}
+
+         [['NP ['DT (:or 'Every 'every 'All 'all)] & _] ['VP & _] _]
+         (let [{:keys [univ conds neg]} (partial-sent down a b) ]
+           {:univ [] :conds []
+            :ante {:univ [(first univ)]
+                   :conds []
+                   :neg false}
+            :conseq {:univ (rest univ)
+                     :conds conds
+                     :neg neg}
+            :neg false})
+
+         ;; indefinite nominal phrase
+         [['NP & _] ['VP & _] _]
+           (partial-sent down a b)
+
+         ;; conditional phrase
+         [['SBAR ['IN & _] ['S & _]] ['NP & _] ['VP & _]]
+         {:univ univ :conds conds
+          :ante (assoc (drs (a 2) {:univ [] :conds []}) :neg false)
+          :conseq (partial-sent {} b c)
+          :neg false}))
 
 
 
 (defmethod drs 'NP
-  [{[a b c d e f] :chunk :as chunk} down up]
-  chunk
-  (fresh [?defined]
-         (membero ?defined [true false])
-         (project [down ?defined]
-                  (matche [(:tag a) (:tag b)]
-                          [['DT 'NN]
-                           (all (drs a down up)
-                                (drs b (assoc down :defined ?defined) up))]
-                          [['NNP _] (drs a down up)]
-                          [['PRP _] (drs a down up)]))))
+  [[_ a b c d] down]
+  (match [a b]
+         [['NP & _] ['SBAR ['WHNP & _] rel-phrase]]
+         (let [entity (drs a down)
+               rel (drs rel-phrase (assoc entity :filler entity))]
+           (assoc entity
+             :univ (:univ rel)
+             :conds (:conds rel)))
+
+         [['DT _] [(:or 'NN 'NNS) _]] (->> down
+                                            (drs a)
+                                            (drs b))
+         [['NNP & _] _] (drs a down)
+         [['PRP & _] _] (drs a down)) )
 
 
 (defmethod drs 'PRP
-  [{[prp] :chunk} down up]
-  (let [pro (case (.toLowerCase prp)
+  [[_ prp] down]
+  (let [pro (case (.toLowerCase (name prp))
               "it" {:quant 1 :gender :neutrum :defined true}
               "she" {:quant 1 :gender :female :defined true}
               "he" {:quant 1 :gender :male :defined true}
               "him" {:quant 1 :gender :male :defined true})
-        id (java.util.UUID/randomUUID)
+        id (*id-fn*)
         pro (assoc pro :id id)]
-    (== up (merge down
-                  pro
-                  {:univ (conj (:univ down) pro)}))))
-
-
-(defn- find-verb [verb]
-  (if (.endsWith verb "s")
-    {:verb (find-lexicon 'VBZ (subs verb
-                                    0
-                                    (dec (count verb))))
-     :quant 1}
-    {:verb (find-lexicon 'VBZ verb)}))
-
-
-(defmethod drs 'VP
-  [{[a b c d e f] :chunk} down up]
-  (let [verb (find-verb (-> a :chunk first))]
-    (matche [(:tag a) (:tag b)]
-
-            [['VBZ _]
-             (!= (:tag b) 'NP)
-             (== up (merge down verb))]
-
-            [['VBZ 'NP]
-             (fresh [?np]
-                    (drs b down ?np)
-                    (project [?np]
-                             (== up
-                                 (merge down
-                                        {:univ (:univ ?np)}
-                                        verb
-                                        {:object ?np}))))])))
+    (merge down
+           pro
+           {:univ (conj (or (:univ down) []) pro)})))
 
 
 (defmethod drs 'DT
-  [{[det] :chunk} down up]
-  (case (.toLowerCase det)
-    "a" (featurec up {:defined false})
-    "an" (featurec up {:defined false})
-    "the" (featurec up {:defined true})))
+  [[_ det] down]
+  (case (.toLowerCase (name det))
+    "every" down
+    "all" down
+    "a" (merge down {:defined false})
+    "an" (merge down {:defined false})
+    "the" (merge down {:defined true})))
 
 
 (defmethod drs 'NN
-  [{[noun] :chunk} down up]
-  (let [id (java.util.UUID/randomUUID)
-        n (assoc (find-lexicon 'NN noun) :id id)]
-    (== up (merge down
-                  {:univ (conj (:univ down) n)}
-                  n))))
+  [[_ noun] down]
+  (let [id (*id-fn*)
+        n (assoc (find-lexicon 'NN (name noun)) :id id)]
+    (merge down
+           {:univ (conj (or (:univ down) []) n)}
+           n)))
+
+(defmethod drs 'NNS
+  [[_ noun] down]
+  (let [id (*id-fn*)
+        n (assoc (find-lexicon 'NNS (name noun)) :id id)]
+    (merge down
+           {:univ (conj (or (:univ down) []) n)}
+           n)))
+
 
 (defmethod drs 'NNP
-  [{[noun] :chunk :as chunk} down up]
-  (let [nom {:id (java.util.UUID/randomUUID)
-             :pred noun
+  [[_ noun] down]
+  (let [nom {:id (*id-fn*)
+             :pred (name noun)
              :quant 1
              :type :name}]
-    (== up (merge down
-                  {:univ (conj (:univ down) nom)}
-                  nom ))))
-
-(reduce (fn [model sent]
-          (first (run 1 [q] (drs (parse-sentence sent) model q))))
-        {:univ []
-         :conds []}
-        ["Peter sleeps ."
-         "He has a headache ."])
+    (merge down
+           {:univ (conj (or (:univ down) []) nom)}
+           nom)))
 
 
+(defmethod drs 'VP
+  [[_ a b c d] down]
+  (let [verb (find-verb (term a))]
+    (match [a b c]
 
+           [[(:or 'VBZ 'VBP 'VB) & _] ['RB _] ['VP & _]]
+            (assoc (drs c down) :negation true)
 
+           [[(:or 'VBZ 'VBP 'VB) & _] ['NP & _] _]
+           (let [obj (drs b down)]
+             (merge down
+                    verb
+                    {:object obj}
+                    {:univ (:univ obj)
+                     :conds (:conds obj)}))
 
+           [[(:or 'VBZ 'VBP 'VB) & _] _ _] (merge down verb))))
 
-
-
+(comment
+  (reduce (fn [model sent]
+            (drs (berkeley-sentence sent) model))
+            {:univ []
+             :conds []}
+            ["A farmer owns a donkey."
+             "He beats it."])
+  )
 

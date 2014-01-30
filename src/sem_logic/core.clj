@@ -1,5 +1,5 @@
 (ns sem-logic.core
-   (:refer-clojure :exclude [==])
+   (:refer-clojure :exclude [== time])
    (:use clojure.core.logic
          clojure.core.logic.pldb)
    (:require [clojure.core.logic.fd :as fd]))

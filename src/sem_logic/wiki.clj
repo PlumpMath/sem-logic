@@ -60,15 +60,20 @@
 
 (defmethod from-wiktionary 'NN
   [type word text]
-  (assoc (cond (> (animals text)
+  (assoc {} #_(cond (> (animals text)
                   (persons text)) {:type :animal}
                (< (animals text)
                   (persons text)) {:type :person})
     :pred word
     :quant 1))
 
+(defmethod from-wiktionary 'NNS
+  [type word text]
+  {:pred (subs word 0 (dec (count word)))
+   :quant :many})
+
 (defmethod from-wiktionary 'VBZ
   [type word text]
   (let [trans (transitivity text)]
-    (assoc (cond trans {:transitivity trans})
+    (assoc {} #_(cond trans {:transitivity trans})
       :pred word)))
