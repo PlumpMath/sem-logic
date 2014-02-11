@@ -44,8 +44,8 @@
           (keyword disjun) #{(drs a {}) (drs c {})}
           :neg false}
 
-         [['NP [(:or 'DT 'JJ)
-                (:or 'Every 'every 'All 'all 'Some 'some 'Many 'many 'Few 'few 'None)] & _]
+         [['NP [(:or 'DT 'JJ 'JJS)
+                (:or 'Every 'every 'All 'all 'Most 'most 'Some 'some 'Many 'many 'Few 'few 'None)] & _]
           ['VP & _] _]
          (let [{:keys [univ conds neg]} (partial-sent down a b) ]
            {:univ [] :conds []
@@ -71,31 +71,41 @@
 
          ;; subject gap
          [['VP & _] _ _]
-         (let [{:keys [univ conds negation]} (drs a down)]
-           {:univ univ :conds conds
-            :filler (down :filler)
-            :neg negation})))
+         (let [{:keys [filler]} down
+               {:keys [univ conds verb object]} (drs a {})]
+           {:univ univ
+            :conds (conj (or conds [])
+                         (if object
+                           [verb (:id filler) (:id object)]
+                           [verb (:id filler)]))})))
 
 
 
 (defmethod drs 'NP
   [[_ a b c d] down]
   (match [a b]
-         [['NP & _] ['SBAR ['WHNP & _] rel-phrase]]
+         [['NP & _] (:or ['SBAR ['WHNP & _] rel-phrase]
+                         ['SBAR rel-phrase])]
          (let [entity (drs a down)
-               rel (drs rel-phrase (assoc entity :filler entity))]
+               rel (drs rel-phrase (assoc down
+                                     :filler entity
+                                     :univ (:univ entity)))]
            (assoc entity
              :univ (:univ rel)
              :conds (:conds rel)))
 
-         [[(:or 'DT 'JJ) _] [(:or 'NN 'NNS) _]] (->> down (drs a) (drs b))
+         [[(:or 'DT 'JJ 'JJS) _] [(:or 'NN 'NNS 'JJ) _]] (->> down (drs a) (drs b))
          [['NNP & _] _] (drs a down)
-         [['PRP & _] _] (drs a down)) )
+         [['NNS & _] _] (drs a down)
+         [['PRP & _] _] (drs a down)
+         [['NN & _] _] (drs a down)) )
 
 
 (defmethod drs 'PRP
   [[_ prp] down]
   (let [pro (case (.toLowerCase (name prp))
+              "me" {:quant 1 :defined true}
+              "you" {:quant 1 :defined true}
               "it" {:quant 1 :gender :neutrum :defined true}
               "she" {:quant 1 :gender :female :defined true}
               "he" {:quant 1 :gender :male :defined true}
@@ -118,6 +128,10 @@
     "the" (merge down {:defined true})))
 
 (defmethod drs 'JJ
+  [[_ det] down]
+  down)
+
+(defmethod drs 'JJS
   [[_ det] down]
   down)
 
@@ -155,10 +169,10 @@
   (let [verb (find-verb (term a))]
     (match [a b c]
 
-           [[(:or 'VBZ 'VBP 'VB) & _] ['RB _] ['VP & _]]
-            (assoc (drs c down) :negation true)
+           [[(:or 'VBZ 'VBP 'VB 'VBD) & _] ['RB _] ['VP & _]]
+            (assoc (drs c down) :neg true)
 
-           [[(:or 'VBZ 'VBP 'VB) & _] ['NP & _] _]
+           [[(:or 'VBZ 'VBP 'VB 'VBD) & _] ['NP & _] _]
            (let [obj (drs b down)]
              (merge down
                     verb
@@ -166,7 +180,13 @@
                     {:univ (:univ obj)
                      :conds (:conds obj)}))
 
-           [[(:or 'VBZ 'VBP 'VB) & _] _ _] (merge down verb))))
+           [[(:or 'VBZ 'VBD) (:or 'am 'are 'is 'have 'has)] ['VP & _] _]
+           (assoc (drs b down) :time :present)
+
+           [[(:or 'VBZ 'VBP 'VB 'VBD) & _] _ _] (merge down verb)
+
+           [['VBG _] _ _]
+           (merge down verb))))
 
 (comment
   (reduce (fn [model sent]
@@ -176,4 +196,3 @@
             ["A farmer owns a donkey."
              "He beats it."])
   )
-

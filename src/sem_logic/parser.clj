@@ -33,6 +33,8 @@
 
 (def tokenize (onlp/make-tokenizer "parser-model/en-token.bin"))
 
+(def get-sentences (onlp/make-sentence-detector "parser-model/en-sent.bin"))
+
 (defn vectorize [nested-seqs]
   (if (seq? nested-seqs)
     (mapv vectorize (filter #(not (and (seq? %) (empty? %))) nested-seqs))

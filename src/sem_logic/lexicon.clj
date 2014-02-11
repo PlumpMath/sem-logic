@@ -19,14 +19,21 @@
                           {:wiki page})
                         {})) word)))))
 
+(def irregular
+  {"am" {:verb "be"}
+   "are" {:verb "be"}
+   "is" {:verb "be" :quant 1}})
 
 (defn find-verb [verb]
-  (if (.endsWith verb "s")
+  (cond
+   (contains? irregular verb) (irregular verb)
+   (.endsWith verb "s")
     {:verb (find-lexicon 'VBZ (subs verb
                                     0
                                     (dec (count verb))))
      :quant 1}
-    {:verb (find-lexicon 'VBZ verb)}))
+    :else {:verb (find-lexicon 'VBZ verb)}))
+
 
 (defn term
   "Return terminal (word) of node."

@@ -74,7 +74,6 @@
              :neg false}))))
 
 
-
 ;; universal nominal phrase
 ;; [S [NP beta] [VP gamma]] or [VP [V gamma] [NP beta]]
 ;; beta = every/all
@@ -90,6 +89,7 @@
              :ante {:univ [{:id b, :pred "farmer", :quant :many}],
                     :conds []
                     :neg false},
+             :quant "all"
              :conseq {:univ [{:id c, :quant 1, :pred "donkey"}],
                       :conds [[{:pred "own"} b c]]
                       :neg false}
@@ -130,3 +130,22 @@
 (comment)
 (run-tests)
 
+
+
+(berkeley-sentence "Most farmers who swim own a donkey.")
+
+(test-sentence "Most farmers who own a donkey beat it.")
+
+(test-sentence "Peter is flying.")
+(berkeley-sentence "Peter will have flown.")
+(berkeley-sentence "Language is the normal way humans communicate.")
+(test-sentence "Language is the normal way humans communicate.")
+(test-sentence "Only humans use language, though many other animals communicate in various ways.")
+(test-sentence "Human language has syntax, a set of rules for connecting words together to make statements and question.")
+"Language can also be changed, by adding new words, for example, to describe new things."
+"Other animals may inherit a set of calls which have pre-set functions."
+
+"Language may be done by speech or by writing or by moving the hands to make signs."
+"It follows that language is not just any way of communicating."
+"Even some human communication is not language: see non-verbal communication."
+"Humans also use language for thinking."

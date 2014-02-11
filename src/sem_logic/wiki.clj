@@ -1,6 +1,10 @@
 (ns sem-logic.wiki
-  (:require [clojure.data.json :as json]))
+  (:require [clojure.data.json :as json]
+            [clj-wordnet.core :refer [make-dictionary]]))
 
+(def wordnet (make-dictionary "parser-model/dict"))
+
+(wordnet "dog" :noun)
 
 (defn wiktionary-page [word]
   (-> "https://en.wiktionary.org/w/api.php?action=query"
@@ -60,7 +64,7 @@
 
 (defmethod from-wiktionary 'NN
   [type word text]
-  (assoc {} #_(cond (> (animals text)
+  (assoc (cond (> (animals text)
                   (persons text)) {:type :animal}
                (< (animals text)
                   (persons text)) {:type :person})
@@ -75,5 +79,5 @@
 (defmethod from-wiktionary 'VBZ
   [type word text]
   (let [trans (transitivity text)]
-    (assoc {} #_(cond trans {:transitivity trans})
+    (assoc (cond trans {:transitivity trans})
       :pred word)))
